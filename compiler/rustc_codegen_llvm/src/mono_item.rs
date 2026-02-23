@@ -45,10 +45,14 @@ impl<'tcx> PreDefineCodegenMethods<'tcx> for CodegenCx<'_, 'tcx> {
                 .emit_fatal(SymbolAlreadyDefined { span: self.tcx.def_span(def_id), symbol_name })
         });
 
-        llvm::set_linkage(g, base::linkage_to_llvm(linkage));
-        self.set_visibility(g, linkage, visibility);
-
-        self.assume_dso_local(g, false);
+        if !self.tcx.sess.opts.unstable_opts.codegen_globals_as_external.unwrap_or(false) {
+            llvm::set_linkage(g, base::linkage_to_llvm(linkage));
+            self.set_visibility(g, linkage, visibility);
+            self.assume_dso_local(g, false);
+        } else {
+            llvm::set_linkage(g, llvm::Linkage::ExternalLinkage);
+            llvm::set_visibility(g, llvm::Visibility::Default);
+        }
 
         let attrs = self.tcx.codegen_instance_attrs(instance.def);
         self.add_static_aliases(g, &attrs.foreign_item_symbol_aliases);

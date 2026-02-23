@@ -189,7 +189,9 @@ fn check_and_apply_linkage<'ll, 'tcx>(
 
         // Normally this is done in `get_static_inner`, but when as we generate an internal global,
         // it will apply the dso_local to the internal global instead, so do it here, too.
-        cx.assume_dso_local(g1, true);
+        if !cx.sess().opts.unstable_opts.codegen_globals_as_external.unwrap_or(false) {
+            cx.assume_dso_local(g1, true);
+        }
 
         // Declare an internal global `extern_with_linkage_foo` which
         // is initialized with the address of `foo`. If `foo` is
@@ -356,7 +358,21 @@ impl<'ll> CodegenCx<'ll, '_> {
             llvm::set_thread_local_mode(g, self.tls_model);
         }
 
-        let dso_local = self.assume_dso_local(g, true);
+        let dso_local = if self
+            .tcx
+            .sess
+            .opts
+            .unstable_opts
+            .codegen_globals_as_external
+            .unwrap_or(false)
+        {
+            llvm::set_linkage(g, llvm::Linkage::ExternalLinkage);
+            llvm::set_visibility(g, llvm::Visibility::Default);
+
+            false
+        } else {
+            self.assume_dso_local(g, true)
+        };
 
         if !def_id.is_local() {
             let needs_dll_storage_attr = self.use_dll_storage_attrs
@@ -466,9 +482,19 @@ impl<'ll> CodegenCx<'ll, '_> {
 
         // NOTE: Alignment from attributes has already been applied to the allocation.
         set_global_alignment(self, g, alloc.align);
-        llvm::set_initializer(g, v);
 
-        self.assume_dso_local(g, true);
+        if self.tcx.sess.opts.unstable_opts.codegen_globals_as_external.unwrap_or(false)
+        {
+            llvm::set_visibility(g, llvm::Visibility::Default);
+            llvm::set_linkage(g, llvm::Linkage::ExternalLinkage);
+
+            if self.use_dll_storage_attrs {
+                llvm::set_dllimport_storage_class(g);
+            }
+        } else {
+            llvm::set_initializer(g, v);
+            self.assume_dso_local(g, true);
+        }
 
         // Forward the allocation's mutability (picked by the const interner) to LLVM.
         if alloc.mutability.is_not() {
